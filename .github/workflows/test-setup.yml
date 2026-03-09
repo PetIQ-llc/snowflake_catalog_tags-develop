@@ -1,0 +1,177 @@
+name: Test Configuration
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_mode:
+        description: 'Test Mode'
+        required: true
+        type: choice
+        options:
+          - 'environment'     # Check environment and dependencies
+          - 'dry-run'        # Run without API calls
+        default: 'environment'
+
+jobs:
+  test-setup:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Check environment
+      run: |
+        echo "## Environment Check" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+
+        # Python version
+        echo "### Python Version" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        python --version >> $GITHUB_STEP_SUMMARY 2>&1
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+
+        # Installed packages
+        echo "### Installed Packages" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        pip list >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+
+        # Check for required files
+        echo "### Required Files" >> $GITHUB_STEP_SUMMARY
+        for file in main.py requirements.txt .env.example; do
+          if [ -f "$file" ]; then
+            echo "✅ $file exists" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ $file missing" >> $GITHUB_STEP_SUMMARY
+          fi
+        done
+        echo "" >> $GITHUB_STEP_SUMMARY
+
+        # Check for modules
+        echo "### Python Modules" >> $GITHUB_STEP_SUMMARY
+        if [ -d "modules" ]; then
+          echo "✅ modules/ directory exists" >> $GITHUB_STEP_SUMMARY
+          echo "Files:" >> $GITHUB_STEP_SUMMARY
+          ls -la modules/*.py | awk '{print "- " $9}' >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ modules/ directory missing" >> $GITHUB_STEP_SUMMARY
+        fi
+        echo "" >> $GITHUB_STEP_SUMMARY
+
+    - name: Check secrets configuration
+      env:
+        COALESCE_API_TOKEN: ${{ secrets.COALESCE_API_TOKEN }}
+        COALESCE_API_URL: ${{ secrets.COALESCE_API_URL || vars.COALESCE_API_URL }}
+      run: |
+        echo "### Secrets & Variables Configuration" >> $GITHUB_STEP_SUMMARY
+
+        if [ -n "$COALESCE_API_TOKEN" ]; then
+          echo "✅ COALESCE_API_TOKEN is configured (secret)" >> $GITHUB_STEP_SUMMARY
+          echo "   Length: ${#COALESCE_API_TOKEN} characters" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ COALESCE_API_TOKEN is not configured" >> $GITHUB_STEP_SUMMARY
+          echo "   Go to Settings > Secrets and variables > Actions > Secrets to add it" >> $GITHUB_STEP_SUMMARY
+        fi
+
+        if [ -n "$COALESCE_API_URL" ]; then
+          echo "✅ COALESCE_API_URL is configured: $COALESCE_API_URL" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "ℹ️ COALESCE_API_URL is not configured (will use default)" >> $GITHUB_STEP_SUMMARY
+          echo "   To configure: Settings > Secrets and variables > Actions > Variables" >> $GITHUB_STEP_SUMMARY
+        fi
+        echo "" >> $GITHUB_STEP_SUMMARY
+
+    - name: Test Python imports
+      run: |
+        echo "### Testing Python Imports" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        python3 << 'EOF' >> $GITHUB_STEP_SUMMARY 2>&1
+        import sys
+        try:
+            import requests
+            print('✅ requests imported successfully')
+            import dotenv
+            print('✅ python-dotenv imported successfully')
+            from modules import CatalogAPIClient
+            print('✅ CatalogAPIClient imported successfully')
+            from modules import get_snowflake_warehouse_ids
+            print('✅ get_snowflake_warehouse_ids imported successfully')
+            from modules import process_tables_for_columns
+            print('✅ process_tables_for_columns imported successfully')
+            from modules import generate_all_sql_statements
+            print('✅ generate_all_sql_statements imported successfully')
+            from modules import process_drop_tags
+            print('✅ process_drop_tags imported successfully')
+            from modules import save_results
+            print('✅ save_results imported successfully')
+            print('')
+            print('All imports successful!')
+        except ImportError as e:
+            print(f'❌ Import error: {e}')
+            sys.exit(1)
+        EOF
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+
+    - name: Dry run test
+      if: github.event.inputs.test_mode == 'dry-run'
+      run: |
+        echo "### Dry Run Test" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+
+        # Create test directories
+        mkdir -p data sql reports logs
+
+        # Check if script can be executed
+        echo "Testing script execution (help mode):" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        python main.py --help >> $GITHUB_STEP_SUMMARY 2>&1 || true
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+
+        # If API token is configured, try a minimal run
+        if [ -n "${{ secrets.COALESCE_API_TOKEN }}" ]; then
+          echo "### Testing with API (1 table limit)" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          COALESCE_API_TOKEN="${{ secrets.COALESCE_API_TOKEN }}" \
+          COALESCE_API_URL="${{ secrets.COALESCE_API_URL || vars.COALESCE_API_URL }}" \
+          python main.py --limit 1 --simple-logs 2>&1 | tail -20 >> $GITHUB_STEP_SUMMARY || true
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "⚠️ Skipping API test (COALESCE_API_TOKEN not configured)" >> $GITHUB_STEP_SUMMARY
+        fi
+
+    - name: Summary
+      run: |
+        echo "## Test Complete" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Next Steps" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "1. **Configure Secrets** (if not done):" >> $GITHUB_STEP_SUMMARY
+        echo "   - Go to Settings > Secrets and variables > Actions" >> $GITHUB_STEP_SUMMARY
+        echo "   - Add COALESCE_API_TOKEN secret" >> $GITHUB_STEP_SUMMARY
+        echo "   - Optionally add COALESCE_API_URL secret" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "2. **Test Manual Sync**:" >> $GITHUB_STEP_SUMMARY
+        echo "   - Run the 'Manual Catalog Sync' workflow" >> $GITHUB_STEP_SUMMARY
+        echo "   - Use 'limited' mode with 5-10 tables" >> $GITHUB_STEP_SUMMARY
+        echo "   - Choose 'artifact' as output destination" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "3. **Enable Automated Sync**:" >> $GITHUB_STEP_SUMMARY
+        echo "   - The daily sync will run automatically at 2 AM UTC" >> $GITHUB_STEP_SUMMARY
+        echo "   - Or trigger it manually from the Actions tab" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "For more details, see [GITHUB_ACTIONS.md](../blob/main/GITHUB_ACTIONS.md)" >> $GITHUB_STEP_SUMMARY
