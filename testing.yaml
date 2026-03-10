@@ -1,0 +1,4 @@
+- name: Show repo contents
+  run: |
+    pwd
+    ls -R
