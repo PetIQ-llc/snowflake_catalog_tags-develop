@@ -165,7 +165,7 @@ Examples:
     # Load API credentials from environment variables
     # -------------------------------------------------------
     api_token = os.getenv("COALESCE_API_TOKEN")
-    api_url = os.getenv("COALESCE_API_URL", "https://api.us.castordoc.com/public/graphql")
+    api_url = os.getenv("COALESCE_API_URL") or "https://api.us.castordoc.com/public/graphql"
 
     # Clean quotes if token contains them
     if api_token:
@@ -176,6 +176,9 @@ Examples:
         logger.error("API token not found. Please set COALESCE_API_TOKEN.")
         return 1
 
+    if not api_url:
+        logger.error("Missing COALESCE_API_URL")
+        return 1
     try:
 
         # -------------------------------------------------------
